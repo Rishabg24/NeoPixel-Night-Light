@@ -3,6 +3,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flex_color_picker/flex_color_picker.dart';
 import 'dart:async';
+import 'dart:ui' as ui;
 
 void main() {
   runApp(const NightlightApp());
@@ -296,26 +297,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 1. Define the sophisticated gradient background
+    // Deep Charcoal Blue (Top) -> Pure Black (Bottom)
+    final backgroundGradient = BoxDecoration(
+      gradient: LinearGradient(
+        colors: [
+          const Color(0xFF1A1F38), // Deep cool charcoal/blue
+          const Color(0xFF000000), // Pure black
+        ],
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+      ),
+    );
+
     if (isCheckingSavedDevice) {
       return Scaffold(
         body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                const Color.fromARGB(255, 115, 115, 115),
-                const Color.fromARGB(255, 204, 178, 178),
-              ],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-          ),
+          decoration: backgroundGradient,
           child: const Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                CircularProgressIndicator(),
+                CircularProgressIndicator(color: Color(0xFF6C63FF)),
                 SizedBox(height: 20),
-                Text('Checking for saved device...'),
+                Text(
+                  'Syncing...',
+                  style: TextStyle(letterSpacing: 1.2, color: Colors.white54),
+                ),
               ],
             ),
           ),
@@ -324,28 +332,43 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
+      // 2. THIS LINE fixes the ugly top banner. It lets the background go behind the header.
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('Nightlight Control'),
+        title: const Text(
+          'NIGHTLIGHT', // All caps looks more "tech"
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w300, // Thinner font looks more elegant
+            letterSpacing: 2.0, // Spacing out letters adds a "premium" feel
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.transparent, // Make it invisible
+        elevation: 0, // Remove the shadow line
         actions: [
-          if (savedDeviceId != null) // ← savedDeviceId EXISTS here
+          if (savedDeviceId != null)
             Padding(
-              padding: const EdgeInsets.all(8.0),
+              padding: const EdgeInsets.only(right: 16.0),
               child: Center(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
+                    horizontal: 10,
+                    vertical: 5,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(12),
+                    color: const Color(
+                      0xFF6C63FF,
+                    ).withOpacity(0.2), // Glass effect
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFF6C63FF).withOpacity(0.5),
+                    ),
                   ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.bluetooth_searching, size: 16),
-                      SizedBox(width: 4),
-                      Text('Monitoring', style: TextStyle(fontSize: 12)),
-                    ],
+                  child: const Icon(
+                    Icons.bluetooth_searching,
+                    size: 16,
+                    color: Color(0xFF6C63FF),
                   ),
                 ),
               ),
@@ -353,119 +376,181 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [const Color.fromARGB(255, 44, 44, 44), Colors.black],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: Center(
+        decoration: backgroundGradient, // Apply the sleek gradient
+        child: SafeArea(
+          // Ensures content doesn't get stuck behind the notch
           child: Padding(
-            padding: const EdgeInsets.all(20.0),
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                const Spacer(flex: 2),
+
+                // 3. Hero Text
                 const Text(
-                  'Nightlight Control',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  savedDeviceId !=
-                          null // looking to make sure savedDeviceId EXISTS
-                      ? 'Monitoring for saved device...\nOr scan for devices'
-                      : 'Scan for your Nightlight device',
+                  'Control Center',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16, color: Colors.grey),
-                ),
-                const SizedBox(height: 40),
-
-                // Scan button
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 77, 64, 64),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 40,
-                      vertical: 20,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    elevation: 10,
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
                   ),
-                  onPressed: isScanning ? null : startScan,
-                  child: isScanning
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Text(
-                          'Scan for Devices',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white, // Add this line
-                          ),
-                        ),
                 ),
+                const SizedBox(height: 8),
+                Text(
+                  savedDeviceId != null
+                      ? 'Reconnecting to your device...'
+                      : 'Connect to your Nightlight',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.white.withOpacity(0.5), // Subtle text
+                    height: 1.5,
+                  ),
+                ),
+
+                const Spacer(flex: 2),
+
+                // 4. The "Cool" Button
+                // We wrap it in a container to give it a glowing shadow
+                Container(
+                  decoration: BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF6C63FF).withOpacity(0.4),
+                        blurRadius: 20,
+                        spreadRadius: 0,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(
+                        0xFF6C63FF,
+                      ), // Electric Violet
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 48,
+                        vertical: 22,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 0, // handled by container
+                    ),
+                    onPressed: isScanning ? null : startScan,
+                    child: isScanning
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text(
+                            'SCAN FOR DEVICES',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                  ),
+                ),
+
                 const SizedBox(height: 40),
 
-                // List of found devices
+                // 5. The Device List (Glassmorphism Style)
                 if (scanResults.isNotEmpty)
                   Expanded(
+                    flex: 4,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(15),
+                        color: Colors.white.withOpacity(
+                          0.05,
+                        ), // Very transparent white
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.1),
+                        ),
                       ),
-                      child: ListView.builder(
-                        itemCount: scanResults.length,
-                        itemBuilder: (context, index) {
-                          final result = scanResults[index];
-                          final device = result.device;
-                          final deviceName = device.platformName.isEmpty
-                              ? 'Unknown Device'
-                              : device.platformName;
-                          final rssi = result.rssi;
+                      child: ClipRRect(
+                        // Clips the list to the rounded corners
+                        borderRadius: BorderRadius.circular(24),
+                        child: BackdropFilter(
+                          // Adds the "Blur" effect
+                          filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: scanResults.length,
+                            separatorBuilder: (c, i) =>
+                                Divider(color: Colors.white.withOpacity(0.1)),
+                            itemBuilder: (context, index) {
+                              final result = scanResults[index];
+                              final device = result.device;
+                              final rssi = result.rssi;
 
-                          return ListTile(
-                            leading: Icon(
-                              Icons.bluetooth,
-                              color: rssi > -70 ? Colors.green : Colors.blue,
-                            ),
-                            title: Text(
-                              deviceName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            subtitle: Text(
-                              '${device.remoteId}\nSignal: $rssi dBm',
-                            ),
-                            isThreeLine: true,
-                            trailing: ElevatedButton(
-                              onPressed: () => connectToDevice(device),
-                              child: const Text('Connect'),
-                            ),
-                          );
-                        },
+                              return ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                leading: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black26,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    Icons.bluetooth,
+                                    color: rssi > -70
+                                        ? const Color(0xFF03DAC6)
+                                        : Colors.white54,
+                                  ),
+                                ),
+                                title: Text(
+                                  device.platformName.isEmpty
+                                      ? 'Unknown Device'
+                                      : device.platformName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  device.remoteId.toString(),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.5),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                trailing: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white.withOpacity(
+                                      0.1,
+                                    ),
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  onPressed: () => connectToDevice(device),
+                                  child: const Text('Connect'),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                       ),
                     ),
                   )
                 else if (!isScanning)
-                  const Padding(
-                    padding: EdgeInsets.all(20.0),
-                    child: Text(
-                      'No devices found.\nMake sure your nightlight is powered on.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
+                  const Spacer(flex: 3),
+
+                const SizedBox(height: 20),
               ],
             ),
           ),
