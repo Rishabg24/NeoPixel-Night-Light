@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flex_color_picker/flex_color_picker.dart';
-import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:async';
 
 void main() {
   runApp(const NightlightApp());
@@ -16,7 +15,18 @@ class NightlightApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Nightlight Control',
-      theme: ThemeData(primarySwatch: Colors.blue, brightness: Brightness.dark),
+      debugShowCheckedModeBanner: false, // Removes the 'Debug' banner
+      theme: ThemeData(
+        useMaterial3: true, // Enables the newer, smoother UI elements
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: Colors.black, // Default background
+        primaryColor: const Color(0xFF6C63FF), // Sleek Violet
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF6C63FF),
+          secondary: Color(0xFF03DAC6),
+          surface: Color(0xFF1E1E1E),
+        ),
+      ),
       home: const HomeScreen(),
     );
   }
@@ -32,6 +42,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool isScanning = false;
   List<ScanResult> scanResults = [];
+  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  bool _isAutoReconnecting = false;
   BluetoothDevice? savedDevice;
   bool isCheckingSavedDevice = true;
   String? savedDeviceId;
@@ -44,7 +56,39 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    checkForSavedDevice();
+    _initializeBluetooth();
+  }
+
+  @override
+  void dispose() {
+    _scanSubscription?.cancel();
+    FlutterBluePlus.stopScan();
+    super.dispose();
+  }
+
+  // Initialize Bluetooth and wait for it to be ready
+  Future<void> _initializeBluetooth() async {
+    // Wait for Bluetooth adapter to be ready
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Check Bluetooth state
+    var adapterState = await FlutterBluePlus.adapterState.first;
+
+    if (adapterState != BluetoothAdapterState.on) {
+      print('Waiting for Bluetooth to turn on...');
+      await FlutterBluePlus.adapterState
+          .firstWhere((state) => state == BluetoothAdapterState.on)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              print('Bluetooth not enabled after timeout');
+              return BluetoothAdapterState.off;
+            },
+          );
+    }
+
+    // Now check for saved device
+    await checkForSavedDevice();
   }
 
   // Check if there's a saved device on app startup
@@ -55,28 +99,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (savedDeviceId != null) {
       print('Found saved device: $savedDeviceName ($savedDeviceId)');
-      // Try to auto-reconnect
-      await attemptAutoReconnect();
+      // CHANGED: Start continuous monitoring instead of one-time check
+      await startContinuousMonitoring();
+    } else {
+      setState(() {
+        isCheckingSavedDevice = false;
+      });
     }
-
-    setState(() {
-      isCheckingSavedDevice = false;
-    });
   }
 
-  // Try to reconnect to saved device
-  Future<void> attemptAutoReconnect() async {
-    if (savedDeviceId == null) return;
+  // FIXED: Continuously monitor for saved device
+  Future<void> startContinuousMonitoring() async {
+    if (savedDeviceId == null || _isAutoReconnecting) return;
 
-    print('Attempting auto-reconnect to $savedDeviceId');
+    _isAutoReconnecting = true;
+    print('Starting continuous monitoring for saved device...');
 
     try {
-      // Get list of connected devices
+      // First check if already connected
       final connectedDevices = await FlutterBluePlus.connectedSystemDevices;
-
       for (var device in connectedDevices) {
         if (device.remoteId.toString() == savedDeviceId) {
-          print('Device already connected, navigating to control screen');
+          print('Device already connected!');
           if (mounted) {
             Navigator.pushReplacement(
               context,
@@ -85,51 +129,52 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             );
           }
+          _isAutoReconnecting = false;
           return;
         }
       }
 
-      // Not connected, try scanning for it
-      print('Device not connected, scanning...');
-      await startScanForSavedDevice();
-    } catch (e) {
-      print('Auto-reconnect error: $e');
-    }
-  }
-
-  // Scan specifically for the saved device (FIXED: race condition)
-  Future<bool> startScanForSavedDevice() async {
-    bool deviceFound = false;
-
-    try {
+      // Start continuous scanning
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
 
-      final subscription = FlutterBluePlus.scanResults.listen((results) {
-        if (deviceFound) return;
-
+      _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (var result in results) {
           if (result.device.remoteId.toString() == savedDeviceId) {
-            deviceFound = true;
-            print('Found saved device during scan!');
+            print('🎯 Found saved device during monitoring!');
             FlutterBluePlus.stopScan();
+            _scanSubscription?.cancel();
             connectToDevice(result.device);
-            break;
+            return;
           }
         }
       });
 
-      // Wait for scan to complete (increased to 6 seconds)
-      await Future.delayed(const Duration(seconds: 6));
+      // Wait for scan to complete
+      await Future.delayed(const Duration(seconds: 10));
 
-      if (!deviceFound) {
-        print('Saved device not found after scan timeout');
+      // Device not found, show home screen and keep monitoring
+      if (mounted && isCheckingSavedDevice) {
+        setState(() {
+          isCheckingSavedDevice = false;
+        });
       }
 
-      await subscription.cancel();
-      return deviceFound;
+      // Restart monitoring after delay if still no device
+      await Future.delayed(const Duration(seconds: 5));
+      _isAutoReconnecting = false;
+
+      // If we're still on home screen and have a saved device, keep monitoring
+      if (mounted && savedDeviceId != null) {
+        startContinuousMonitoring();
+      }
     } catch (e) {
-      print('Scan error: $e');
-      return false;
+      print('Monitoring error: $e');
+      _isAutoReconnecting = false;
+      if (mounted) {
+        setState(() {
+          isCheckingSavedDevice = false;
+        });
+      }
     }
   }
 
@@ -183,22 +228,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Connect to a device and save it
   Future<void> connectToDevice(BluetoothDevice device) async {
+    // In connectToDevice(), add at the very top:
+    print('🔵 connectToDevice called for ${device.platformName}');
+    print('🔵 mounted: $mounted');
+
     try {
       print('Connecting to ${device.platformName}...');
 
       // Show connecting dialog
       if (mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 20),
-                Text('Connecting...'),
-              ],
-            ),
+        // Close dialog if it was shown
+        if (!isCheckingSavedDevice && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+
+        // Navigate to control screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ControlScreen(device: device),
           ),
         );
       }
@@ -216,19 +264,29 @@ class _HomeScreenState extends State<HomeScreen> {
       print('Connected and saved!');
 
       // Close connecting dialog and navigate to control screen
-      if (mounted) {
-        Navigator.pop(context); // Close dialog
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ControlScreen(device: device),
+      if (mounted && !isCheckingSavedDevice) {
+        // ADDED !isCheckingSavedDevice check
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Text('Connecting...'),
+              ],
+            ),
           ),
         );
       }
     } catch (e) {
       print('Error connecting: $e');
       if (mounted) {
-        Navigator.pop(context); // Close dialog
+        // Close dialog if it was shown
+        if (!isCheckingSavedDevice && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to connect: $e')));
@@ -243,7 +301,10 @@ class _HomeScreenState extends State<HomeScreen> {
         body: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.deepPurple.shade900, Colors.black],
+              colors: [
+                const Color.fromARGB(255, 115, 115, 115),
+                const Color.fromARGB(255, 204, 178, 178),
+              ],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
@@ -263,11 +324,38 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Nightlight Control')),
+      appBar: AppBar(
+        title: const Text('Nightlight Control'),
+        actions: [
+          if (savedDeviceId != null) // ← savedDeviceId EXISTS here
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.bluetooth_searching, size: 16),
+                      SizedBox(width: 4),
+                      Text('Monitoring', style: TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.deepPurple.shade900, Colors.black],
+            colors: [const Color.fromARGB(255, 44, 44, 44), Colors.black],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -283,16 +371,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'Scan for your RG-Nightlight device',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                Text(
+                  savedDeviceId !=
+                          null // looking to make sure savedDeviceId EXISTS
+                      ? 'Monitoring for saved device...\nOr scan for devices'
+                      : 'Scan for your Nightlight device',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
                 ),
                 const SizedBox(height: 40),
 
                 // Scan button
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purpleAccent,
+                    backgroundColor: const Color.fromARGB(255, 77, 64, 64),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 40,
                       vertical: 20,
@@ -312,37 +404,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Text(
+                      : Text(
                           'Scan for Devices',
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
+                            color: Colors.white, // Add this line
                           ),
                         ),
                 ),
-
-                const SizedBox(height: 20),
-
-                // DEBUG BUTTON
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 30,
-                      vertical: 15,
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const MockControlScreen(),
-                      ),
-                    );
-                  },
-                  child: const Text('DEBUG: View Mock Control Screen'),
-                ),
-
                 const SizedBox(height: 40),
 
                 // List of found devices
@@ -646,7 +716,7 @@ class _ControlScreenState extends State<ControlScreen> {
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Colors.deepPurple.shade900, Colors.black],
+                colors: [const Color.fromARGB(255, 44, 44, 44), Colors.black],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),
@@ -912,280 +982,6 @@ class _ControlScreenState extends State<ControlScreen> {
                         );
                       },
                       child: const Text('Forget Device'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-// DEBUG: Mock Control Screen for testing without BLE
-class MockControlScreen extends StatefulWidget {
-  const MockControlScreen({super.key});
-
-  @override
-  State<MockControlScreen> createState() => _MockControlScreenState();
-}
-
-class _MockControlScreenState extends State<MockControlScreen> {
-  bool smoothMode = false;
-  double brightness = 0.3;
-  Color selectedColor = Colors.white;
-  bool showSettings = false;
-
-  Future<void> sendColor(Color color) async {
-    print(
-      'Mock: Sending color: R=${color.red} G=${color.green} B=${color.blue}',
-    );
-    setState(() {
-      selectedColor = color;
-    });
-  }
-
-  Future<void> sendBrightness(double value) async {
-    print('Mock: Sending brightness: $value');
-    setState(() {
-      brightness = value;
-    });
-  }
-
-  Future<void> toggleSmoothMode() async {
-    print('Mock: Toggling smooth mode: ${!smoothMode}');
-    setState(() {
-      smoothMode = !smoothMode;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('RG-Nightlight (DEBUG)'),
-        actions: [
-          IconButton(
-            icon: Icon(showSettings ? Icons.close : Icons.settings),
-            onPressed: () {
-              setState(() {
-                showSettings = !showSettings;
-              });
-            },
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.deepPurple.shade900, Colors.black],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.orange, width: 2),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.bug_report, color: Colors.orange),
-                          SizedBox(width: 10),
-                          Text(
-                            'Mock Mode (No BLE)',
-                            style: TextStyle(
-                              color: Colors.orange,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 30),
-                    const Text(
-                      'Color',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    GestureDetector(
-                      onTap: () async {
-                        // FIXED: Removed null check in mock screen too
-                        final Color pickedColor = await showColorPickerDialog(
-                          context,
-                          selectedColor,
-                          title: Text(
-                            'Pick a color',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          pickersEnabled: {ColorPickerType.wheel: true},
-                          actionButtons: const ColorPickerActionButtons(
-                            dialogActionButtons: true,
-                          ),
-                        );
-
-                        sendColor(pickedColor);
-                      },
-                      child: Container(
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: selectedColor,
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(color: Colors.white, width: 3),
-                        ),
-                        child: const Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.palette,
-                                size: 30,
-                                color: Colors.white70,
-                              ),
-                              SizedBox(height: 5),
-                              Text(
-                                'Tap to pick color',
-                                style: TextStyle(color: Colors.white70),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 30),
-
-                    const Text(
-                      'Brightness',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        const Icon(Icons.brightness_low),
-                        Expanded(
-                          child: Slider(
-                            value: brightness,
-                            min: 0.0,
-                            max: 1.0,
-                            divisions: 10,
-                            label: '${(brightness * 100).round()}%',
-                            onChanged: (value) {
-                              sendBrightness(value);
-                            },
-                          ),
-                        ),
-                        const Icon(Icons.brightness_high),
-                      ],
-                    ),
-
-                    const SizedBox(height: 30),
-
-                    Container(
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Smooth Mode',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                'Gradual color transitions',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Switch(
-                            value: smoothMode,
-                            onChanged: (value) {
-                              toggleSmoothMode();
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          if (showSettings)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                margin: const EdgeInsets.all(10),
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade900,
-                  borderRadius: BorderRadius.circular(15),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.5),
-                      blurRadius: 10,
-                      spreadRadius: 5,
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Device Settings',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    const Text('Device Name: RG-Nightlight (Mock)'),
-                    const SizedBox(height: 5),
-                    const Text('Device ID: 00:00:00:00:00:00'),
-                    const SizedBox(height: 20),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        minimumSize: const Size(double.infinity, 50),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                      },
-                      child: const Text('Back to Scan'),
                     ),
                   ],
                 ),
