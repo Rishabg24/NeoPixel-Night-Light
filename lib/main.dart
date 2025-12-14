@@ -98,17 +98,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Scan specifically for the saved device (FIXED: race condition)
-  Future<void> startScanForSavedDevice() async {
+  Future<bool> startScanForSavedDevice() async {
     bool deviceFound = false;
 
     try {
-      await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 4),
-        withServices: [uartServiceUuid],
-      );
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
 
       final subscription = FlutterBluePlus.scanResults.listen((results) {
-        if (deviceFound) return; // Already found, ignore further results
+        if (deviceFound) return;
 
         for (var result in results) {
           if (result.device.remoteId.toString() == savedDeviceId) {
@@ -121,16 +118,18 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
 
-      // Wait for scan to complete
-      await Future.delayed(const Duration(seconds: 4));
+      // Wait for scan to complete (increased to 6 seconds)
+      await Future.delayed(const Duration(seconds: 6));
 
       if (!deviceFound) {
         print('Saved device not found after scan timeout');
       }
 
       await subscription.cancel();
+      return deviceFound;
     } catch (e) {
       print('Scan error: $e');
+      return false;
     }
   }
 
@@ -142,6 +141,11 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
+      var adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState != BluetoothAdapterState.on) {
+        throw Exception('Bluetooth is not enabled');
+      }
+
       // Start scanning WITHOUT service filter to see all devices
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 4),
@@ -448,8 +452,11 @@ class _ControlScreenState extends State<ControlScreen> {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text('Device disconnected')));
-          // Go back to scan screen if disconnected
-          Navigator.pop(context);
+          // NEW: Use pushAndRemoveUntil instead of pop
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const HomeScreen()),
+            (route) => false,
+          );
         }
       }
     });
@@ -600,7 +607,10 @@ class _ControlScreenState extends State<ControlScreen> {
     await prefs.remove('saved_device_name');
 
     if (mounted) {
-      Navigator.pop(context); // Go back to scan screen
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+        (route) => false,
+      );
     }
   }
 
@@ -609,6 +619,15 @@ class _ControlScreenState extends State<ControlScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.device.platformName),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
+              (route) => false,
+            );
+          },
+        ),
         actions: [
           // Settings icon
           IconButton(
