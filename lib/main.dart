@@ -142,16 +142,16 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      // Start scanning with UART service filter
+      // Start scanning WITHOUT service filter to see all devices
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 4),
-        withServices: [uartServiceUuid], // Filter for UART service
+        // Removed withServices filter - now shows ALL BLE devices
       );
 
       // Listen to scan results
       FlutterBluePlus.scanResults.listen((results) {
         setState(() {
-          // Filter to show devices with names (your Xiao should have "RG-Nightlight")
+          // Show all devices with names
           scanResults = results
               .where((r) => r.device.platformName.isNotEmpty)
               .toList();
@@ -570,9 +570,7 @@ class _ControlScreenState extends State<ControlScreen> {
   Future<void> sendBrightnessSteps(double newValue) async {
     int steps = ((newValue - previousBrightness) * 10).round();
 
-    print(
-      'Brightness change: ${previousBrightness} -> $newValue (${steps} steps)',
-    );
+    print('Brightness change: $previousBrightness -> $newValue ($steps steps)');
 
     // Send multiple button presses based on difference
     for (int i = 0; i < steps.abs(); i++) {
