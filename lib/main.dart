@@ -5,6 +5,9 @@ import 'package:flex_color_picker/flex_color_picker.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
+import 'dart:typed_data';
+import 'dart:math' as math;
+import 'dart:convert';
 
 void main() {
   runApp(const NightlightApp());
@@ -540,16 +543,23 @@ class _ControlScreenState extends State<ControlScreen> {
 
   Future<void> setupBLE() async {
     try {
-      List<BluetoothService> services = await widget.device.discoverServices();
+      await widget.device.discoverServices(); // force refresh
+      final services = widget.device.servicesList;
+
       for (var service in services) {
         if (service.uuid == uartServiceUuid) {
           for (var characteristic in service.characteristics) {
             if (characteristic.uuid == txCharacteristicUuid) {
               txCharacteristic = characteristic;
-            } else if (characteristic.uuid == rxCharacteristicUuid) {
+            }
+
+            if (characteristic.uuid == rxCharacteristicUuid) {
               rxCharacteristic = characteristic;
-              await rxCharacteristic!.setNotifyValue(true);
-              rxCharacteristic!.lastValueStream.listen((value) {});
+              print(
+                'RX properties: '
+                'write=${rxCharacteristic!.properties.write}, '
+                'writeNoResp=${rxCharacteristic!.properties.writeWithoutResponse}',
+              );
             }
           }
         }
@@ -565,12 +575,18 @@ class _ControlScreenState extends State<ControlScreen> {
     super.dispose();
   }
 
-  Future<void> sendUartData(List<int> data) async {
-    if (txCharacteristic == null) return;
+  Future<void> sendUartData(Uint8List data) async {
+    // IMPORTANT: send to the peripheral's RX characteristic (central -> peripheral)
+    if (txCharacteristic == null) {
+      print('Error: txCharacteristic (6e400003) is null');
+      return;
+    }
     try {
-      await txCharacteristic!.write(
-        Uint8List.fromList(data),
-        withoutResponse: true,
+      // Use write WITH response while debugging so the stack doesn't drop/coalesce frames.
+      await txCharacteristic!.write(data, withoutResponse: true);
+      // small debug print in hex
+      print(
+        'Wrote (${data.length}): ${data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}',
       );
     } catch (e) {
       print('Error sending data: $e');
@@ -579,50 +595,56 @@ class _ControlScreenState extends State<ControlScreen> {
 
   Timer? _brightnessDebounce;
 
-  // ---------------------------------------------------------
-  // CORRECTED PACKET CONSTRUCTION LOGIC BELOW
-  // ---------------------------------------------------------
-
   Future<void> sendColor(Color color) async {
-    // Adafruit Bluefruit Protocol: [!, C, r, g, b, checksum]
-    // NO length byte should be included for ColorPacket.
-
     const int header = 0x21; // '!'
-    const int type = 0x43; // 'C' (ColorPacket)
+    const int type = 0x43; // 'C'
 
-    int r = color.red;
-    int g = color.green;
-    int b = color.blue;
+    final int r = color.red & 0xFF;
+    final int g = color.green & 0xFF;
+    final int b = color.blue & 0xFF;
 
-    // Checksum = ~sum(type + data) & 0xFF
-    final int sum = (type + r + g + b) & 0xFF;
+    // CHECKSUM MUST INCLUDE header (0x21) + type + data
+    final int sum = (header + type + r + g + b) & 0xFF;
     final int checksum = (~sum) & 0xFF;
 
-    final packet = [header, type, r, g, b, checksum];
+    final packet = Uint8List.fromList([header, type, r, g, b, checksum]);
 
     await sendUartData(packet);
     setState(() => selectedColor = color);
-    print('Sent color: $packet');
+    print(
+      'Sent color packet: ${packet.map((x) => x.toRadixString(16).padLeft(2, '0')).join(' ')}',
+    );
   }
 
-  Future<void> sendButtonPressInt(int buttonCharCode, {int pressed = 1}) async {
-    // Adafruit Bluefruit Protocol: [!, B, button, pressed, checksum]
-    // NO length byte should be included for ButtonPacket.
-
+  // Use ASCII '1'/'0' for pressed state (0x31/0x30), and include header in checksum.
+  Future<void> sendButtonPressInt(
+    int buttonCharCode, {
+    bool pressed = true,
+  }) async {
     const int header = 0x21; // '!'
-    const int type = 0x42; // 'B' (ButtonPacket)
+    const int type = 0x42; // 'B'
 
     final int buttonByte = buttonCharCode & 0xFF;
-    final int pressedByte = (pressed & 0xFF);
+    final int pressedByte = pressed
+        ? '1'.codeUnitAt(0)
+        : '0'.codeUnitAt(0); // ASCII '1'/'0'
 
-    // Checksum = ~sum(type + data) & 0xFF
-    final int sum = (type + buttonByte + pressedByte) & 0xFF;
+    // INCLUDE header in checksum calculation
+    final int sum = (header + type + buttonByte + pressedByte) & 0xFF;
     final int checksum = (~sum) & 0xFF;
 
-    final packet = <int>[header, type, buttonByte, pressedByte, checksum];
+    final packet = Uint8List.fromList([
+      header,
+      type,
+      buttonByte,
+      pressedByte,
+      checksum,
+    ]);
 
-    await sendUartData(Uint8List.fromList(packet));
-    print('Sent button: $packet');
+    await sendUartData(packet);
+    print(
+      'Sent button packet: ${packet.map((x) => x.toRadixString(16).padLeft(2, '0')).join(' ')}',
+    );
   }
 
   // ---------------------------------------------------------
