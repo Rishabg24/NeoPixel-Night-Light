@@ -100,7 +100,7 @@ try:
         val = normalized_read(raw)
         event = keys.events.get()
 
-        # 3. Handle BLE Packets (Robust)
+        # 3. Handle BLE Packets
         if ble.connected and uart.in_waiting:
             try:
                 # Packet.from_stream can raise ValueError if checksum fails
@@ -139,7 +139,7 @@ try:
                             if neopixel_on: pixels.show()
 
             except ValueError:
-                # This catches the checksum error silently so the loop continues
+                # Catching any checksum errors while still allowing the loop continues
                 print("Ignored bad packet (checksum error)")
                 raw = uart.read(uart.in_waiting)
                 print("Ignored bad packet (raw):", raw)
