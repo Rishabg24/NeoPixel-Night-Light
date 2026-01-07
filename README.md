@@ -1,0 +1,1 @@
+This is the repository housing all nightlight project software. The main branch currently only has the firmware for the nightlight, while the master branch contains all the code for the app. This was done to separate the hardware and software code, making it easier to prototype and organize. 
